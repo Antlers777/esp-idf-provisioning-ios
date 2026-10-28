@@ -61,6 +61,13 @@ protocol ESPBLETransportDelegate {
     /// - Parameter serviceUUID: the service UUID provided at the time of creating the BLETransport object
     func peripheralsNotFound(serviceUUID: UUID?)
 
+    func peripheralDiscovered(
+        device: ESPDevice,
+        identifier: UUID,
+        rssi: NSNumber,
+        advertisementData: [String: Any]
+    )
+
 }
 
 /// The `ESPBleTransport` class conforms and implememnt methods of `ESPCommunicable` protocol.
@@ -324,7 +331,10 @@ class ESPBleTransport: NSObject, ESPCommunicable {
                                      selector: #selector(stopScan(timer:)),
                                      userInfo: nil,
                                      repeats: true)
-            centralManager.scanForPeripherals(withServices: nil)
+            centralManager.scanForPeripherals(
+                withServices: nil,
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            )
         }
     }
 
@@ -382,23 +392,48 @@ extension ESPBleTransport: CBCentralManagerDelegate {
                                      selector: #selector(stopScan(timer:)),
                                      userInfo: nil,
                                      repeats: true)
-            centralManager.scanForPeripherals(withServices: nil)
+            centralManager.scanForPeripherals(
+                withServices: nil,
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            )
         @unknown default: break
         }
     }
 
-    func centralManager(_: CBCentralManager,
-                        didDiscover peripheral: CBPeripheral,
-                        advertisementData data: [String: Any],
-                        rssi _: NSNumber) {
-        ESPLog.log("Peripheral devices discovered.\(data.debugDescription)")
-        if let peripheralName = data["kCBAdvDataLocalName"] as? String ?? peripheral.name  {
-            if peripheralName.lowercased().hasPrefix(deviceNamePrefix.lowercased()) {
-                let newEspDevice  = ESPDevice(name: peripheralName, security: .secure, transport: .ble, advertisementData: data)
-                espressifPeripherals[peripheralName] = newEspDevice
-                newEspDevice.peripheral = peripheral
-            }
+    func centralManager(
+        _: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData data: [String: Any],
+        rssi: NSNumber
+    ) {
+        guard let name = data[CBAdvertisementDataLocalNameKey] as? String
+                ?? peripheral.name,
+              name.lowercased().hasPrefix(deviceNamePrefix.lowercased())
+        else {
+            return
         }
+
+        let identifier = peripheral.identifier.uuidString
+
+        // 同一设备再次广播时，复用已有对象；RSSI 仍会每次上报。
+        let device = espressifPeripherals[identifier]
+            ?? ESPDevice(
+                name: name,
+                security: .secure,
+                transport: .ble,
+                advertisementData: data
+            )
+
+        device.peripheral = peripheral
+        device.advertisementData = data
+        espressifPeripherals[identifier] = device
+
+        delegate?.peripheralDiscovered(
+            device: device,
+            identifier: peripheral.identifier,
+            rssi: rssi,
+            advertisementData: data
+        )
     }
 
     func centralManager(_: CBCentralManager, didConnect _: CBPeripheral) {

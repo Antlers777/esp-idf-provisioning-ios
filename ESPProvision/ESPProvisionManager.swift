@@ -85,6 +85,8 @@ public class ESPProvisionManager: NSObject, AVCaptureMetadataOutputObjectsDelega
     private var transport:ESPTransport = .ble
     private var security: ESPSecurity = .secure2
     private var searchCompletionHandler: (([ESPDevice]?,ESPDeviceCSSError?) -> Void)?
+    private var deviceDiscoveredHandler:
+        ((ESPDevice, UUID, Int, [String: Any]) -> Void)?
     private var scanCompletionHandler: ((ESPDevice?,ESPDeviceCSSError?) -> Void)?
     private var captureSession: AVCaptureSession!
     private var previewLayer: AVCaptureVideoPreviewLayer?
@@ -109,7 +111,14 @@ public class ESPProvisionManager: NSObject, AVCaptureMetadataOutputObjectsDelega
     ///                        of search is returned as parameter of this function. When search is successful
     ///                        array of found devices are returned. When search fails then reaon for failure is
     ///                        returned as `ESPDeviceCSSError`.
-    public func searchESPDevices(devicePrefix: String,transport: ESPTransport, security:ESPSecurity = .secure, completionHandler: @escaping ([ESPDevice]?,ESPDeviceCSSError?) -> Void) {
+    public func searchESPDevices(
+        devicePrefix: String,
+        transport: ESPTransport,
+        security: ESPSecurity = .secure,
+        onDeviceDiscovered: ((ESPDevice, UUID, Int, [String: Any]) -> Void)? = nil,
+        completionHandler: @escaping ([ESPDevice]?, ESPDeviceCSSError?) -> Void
+    ) {
+        self.deviceDiscoveredHandler = onDeviceDiscovered
         
         ESPLog.log("Search ESPDevices called.")
         
@@ -137,6 +146,7 @@ public class ESPProvisionManager: NSObject, AVCaptureMetadataOutputObjectsDelega
     /// Any intermediate search result will be ignored. Delegate for peripheralsNotFound is called.
     public func stopESPDevicesSearch() {
         ESPLog.log("Stop ESPDevices search called.")
+        deviceDiscoveredHandler = nil
         espBleTransport?.stopSearch()
     }
     
@@ -336,7 +346,7 @@ public class ESPProvisionManager: NSObject, AVCaptureMetadataOutputObjectsDelega
     public func createESPDevice(deviceName: String, transport: ESPTransport, security: ESPSecurity = .secure2, proofOfPossession:String? = nil, softAPPassword:String? = nil, username:String? = nil, network: ESPNetworkType? = nil, completionHandler: @escaping (ESPDevice?,ESPDeviceCSSError?) -> Void) {
         
         ESPLog.log("Creating ESPDevice...")
-        
+        deviceDiscoveredHandler = nil
         switch transport {
         case .ble:
             self.searchCompletionHandler = nil
@@ -376,6 +386,7 @@ extension ESPProvisionManager: ESPBLETransportDelegate {
             device.espBleTransport = espBleTransport
             espDevices.append(device)
         }
+        deviceDiscoveredHandler = nil
         self.searchCompletionHandler?(espDevices,nil)
         self.scanCompletionHandler?(espDevices.first,nil)
     }
@@ -383,9 +394,29 @@ extension ESPProvisionManager: ESPBLETransportDelegate {
     func peripheralsNotFound(serviceUUID _: UUID?) {
         
         ESPLog.log("No ble devices found.")
-        
+        deviceDiscoveredHandler = nil
         self.searchCompletionHandler?(nil,.espDeviceNotFound)
         self.scanCompletionHandler?(nil,.espDeviceNotFound)
+    }
+
+    func peripheralDiscovered(
+        device: ESPDevice,
+        identifier: UUID,
+        rssi: NSNumber,
+        advertisementData: [String: Any]
+    ) {
+        // 实时返回的设备也要绑定当前传输对象，后续才能连接。
+        device.security = security
+        device.proofOfPossession = espBleTransport.proofOfPossession
+        device.username = espBleTransport.username
+        device.espBleTransport = espBleTransport
+
+        deviceDiscoveredHandler?(
+            device,
+            identifier,
+            rssi.intValue,
+            advertisementData
+        )
     }
 }
 

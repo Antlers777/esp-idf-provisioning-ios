@@ -131,7 +131,7 @@ open class ESPDevice {
     public var network: ESPNetworkType?
     /// Advertisement data for BLE device
     /// This property is read-only
-    public private(set) var advertisementData:[String:Any]?
+    public internal(set) var advertisementData: [String: Any]?
     
     private var transportLayer: ESPCommunicable!
     private var provision: ESPProvision!
